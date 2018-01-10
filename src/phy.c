@@ -89,7 +89,7 @@ static struct l_dbus_message *property_set_powered(struct l_dbus *dbus,
 	wpan->powered = value;
 
 	if (value == true)
-		lowpan_init();
+		lowpan_init(wpan->ifindex);
 	else
 		lowpan_exit();
 
@@ -279,7 +279,7 @@ static void get_interface_callback(struct l_genl_msg *msg, void *user_data)
 		switch (type) {
 		case NL802154_ATTR_IFINDEX:
 			wpan->ifindex = *((uint32_t *) data);
-			l_debug("  id: %d",  wpan->ifindex);
+			l_debug("  ifindex: %d",  wpan->ifindex);
 			break;
 		case NL802154_ATTR_IFNAME:
 			wpan->name = l_strdup(data);
