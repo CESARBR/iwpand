@@ -20,5 +20,5 @@
  *
  */
 
-bool lowpan_init(void);
+bool lowpan_init(uint32_t ifindex);
 void lowpan_exit(void);
