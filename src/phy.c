@@ -38,9 +38,16 @@ struct phy {
 	bool powered;
 	uint8_t page;
 	uint8_t channel;
+	uint16_t panid;
+};
+
+struct wpan {
+	uint32_t id;
+	uint16_t panid;
 };
 
 static struct l_queue *phy_list = NULL;
+static struct l_queue *iface_list = NULL;
 static struct l_genl_family *nl802154 = NULL;
 
 static void phy_free(void *data)
@@ -152,6 +159,19 @@ static struct l_dbus_message *phy_property_set_channel(struct l_dbus *dbus,
 	return NULL;
 }
 
+static bool phy_property_get_panid(struct l_dbus *dbus,
+                                        struct l_dbus_message *msg,
+                                        struct l_dbus_message_builder *builder,
+                                        void *user_data)
+{
+        struct phy *phy = user_data;
+
+        l_dbus_message_builder_append_basic(builder, 'q', &phy->panid);
+        l_info("GetProperty(PanId = %d)", phy->panid);
+
+        return true;
+}
+
 static void setup_phy_interface(struct l_dbus_interface *interface)
 {
 	if (!l_dbus_interface_property(interface, "Powered", 0, "b",
@@ -168,6 +188,11 @@ static void setup_phy_interface(struct l_dbus_interface *interface)
 				       phy_property_get_channel,
 				       phy_property_set_channel))
 		l_error("Can't add 'Channel' property");
+
+	if (!l_dbus_interface_property(interface, "PanId", 0, "q",
+                                       phy_property_get_panid,
+                                       NULL))
+                l_error("Can't add 'PanId' property");
 }
 
 static void add_interface(struct phy *phy)
@@ -230,6 +255,40 @@ static void get_wpan_phy_callback(struct l_genl_msg *msg, void *user_data)
 			phy->channel = *((uint8_t *) data);
 			l_debug("  channel: %d", phy->channel);
 			break;
+		case NL802154_ATTR_PAN_ID:
+                        phy->panid = *((uint16_t *) data);
+                        l_debug("  PanId: %d", phy->panid);
+                        break;
+		}
+	}
+}
+
+static void get_interface_callback(struct l_genl_msg *msg, void *user_data)
+{
+	struct wpan *wpan;
+	struct l_genl_attr attr;
+	uint16_t type, len;
+	const void *data;
+
+	l_debug("");
+
+	if (!l_genl_attr_init(&attr, msg))
+		return;
+
+	wpan = l_new(struct wpan, 1);
+	l_queue_push_head(iface_list, wpan);
+
+	while (l_genl_attr_next(&attr, &type, &len, &data)) {
+		l_debug("type: %u len:%u", type, len);
+		switch (type) {
+		case NL802154_ATTR_WPAN_PHY:
+			wpan->id = *((uint32_t *) data);
+			l_debug("  id: %d", wpan->id);
+			break;
+		case NL802154_ATTR_PAN_ID:
+                        wpan->panid = *((uint16_t *) data);
+                        l_debug("  PanId: %d", wpan->panid);
+			break;
 		}
 	}
 }
@@ -245,6 +304,13 @@ bool phy_init(struct l_genl_family *genl)
 		return false;
 	}
 
+	msg = l_genl_msg_new(NL802154_CMD_GET_INTERFACE);
+	if (!l_genl_family_dump(genl, msg, get_interface_callback,
+						NULL, NULL)) {
+		l_error("Getting all interfaces failed");
+		return false;
+	}
+
 	if (!l_dbus_register_interface(dbus_get_bus(),
 				       PHY_INTERFACE,
 				       setup_phy_interface,
@@ -254,6 +320,7 @@ bool phy_init(struct l_genl_family *genl)
 	}
 
 	phy_list = l_queue_new();
+	iface_list = l_queue_new();
 	nl802154 = genl;
 
 	return true;
@@ -262,4 +329,5 @@ bool phy_init(struct l_genl_family *genl)
 void phy_exit(struct l_genl_family *genl)
 {
 	l_queue_destroy(phy_list, phy_free);
+	l_queue_destroy(iface_list, l_free);
 }
