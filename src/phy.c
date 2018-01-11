@@ -172,6 +172,39 @@ static bool phy_property_get_panid(struct l_dbus *dbus,
         return true;
 }
 
+static struct l_dbus_message *phy_property_set_panid(struct l_dbus *dbus,
+                                        struct l_dbus_message *message,
+                                        struct l_dbus_message_iter *new_value,
+                                        l_dbus_property_complete_cb_t complete,
+                                        void *user_data)
+{
+        struct phy *phy = user_data;
+        struct l_genl_msg *msg;
+        uint16_t value;
+
+        if(!l_dbus_message_iter_get_variant(new_value, "q", &value))
+                return dbus_error_invalid_args(message);
+
+        l_info("SetProperty(PANID = %d)", value);
+
+        msg = l_genl_msg_new_sized(NL802154_CMD_SET_PAN_ID, 64);
+        l_genl_msg_append_attr(msg, NL802154_ATTR_WPAN_PHY,
+                               sizeof(phy->id), &phy->id);
+        l_genl_msg_append_attr(msg, NL802154_ATTR_PAGE, 1, &phy->page);
+        l_genl_msg_append_attr(msg, NL802154_ATTR_CHANNEL, 1, &phy->channel);
+        l_genl_msg_append_attr(msg, NL802154_ATTR_PAN_ID, 2, &value);
+
+        if (!l_genl_family_send(nl802154, msg, NULL, NULL, NULL)) {
+                l_error("NL802154_CMD_SET_PAN_ID failed");
+                return dbus_error_invalid_args(message);
+        }
+
+        phy->panid =value;
+        complete(dbus, message, NULL);
+
+        return NULL;
+}
+
 static void setup_phy_interface(struct l_dbus_interface *interface)
 {
 	if (!l_dbus_interface_property(interface, "Powered", 0, "b",
@@ -191,7 +224,7 @@ static void setup_phy_interface(struct l_dbus_interface *interface)
 
 	if (!l_dbus_interface_property(interface, "PanId", 0, "q",
                                        phy_property_get_panid,
-                                       NULL))
+                                       phy_property_set_panid))
                 l_error("Can't add 'PanId' property");
 }
 
