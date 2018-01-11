@@ -38,6 +38,7 @@ struct phy {
 	bool powered;
 	uint8_t page;
 	uint8_t channel;
+	uint16_t panid;
 };
 
 static struct l_queue *phy_list = NULL;
@@ -152,6 +153,19 @@ static struct l_dbus_message *phy_property_set_channel(struct l_dbus *dbus,
 	return NULL;
 }
 
+static bool phy_property_get_panid(struct l_dbus *dbus,
+                                        struct l_dbus_message *msg,
+                                        struct l_dbus_message_builder *builder,
+                                        void *user_data)
+{
+        struct phy *phy = user_data;
+
+        l_dbus_message_builder_append_basic(builder, 'q', &phy->panid);
+        l_info("GetProperty(PANID = %d)", phy->panid);
+
+        return true;
+}
+
 static void setup_phy_interface(struct l_dbus_interface *interface)
 {
 	if (!l_dbus_interface_property(interface, "Powered", 0, "b",
@@ -168,6 +182,11 @@ static void setup_phy_interface(struct l_dbus_interface *interface)
 				       phy_property_get_channel,
 				       phy_property_set_channel))
 		l_error("Can't add 'Channel' property");
+
+	if (!l_dbus_interface_property(interface, "PANID", 0, "q",
+                                       phy_property_get_panid,
+                                       NULL))
+                l_error("Can't add 'PANID' property");
 }
 
 static void add_interface(struct phy *phy)
@@ -230,6 +249,10 @@ static void get_wpan_phy_callback(struct l_genl_msg *msg, void *user_data)
 			phy->channel = *((uint8_t *) data);
 			l_debug("  channel: %d", phy->channel);
 			break;
+		case NL802154_ATTR_PAN_ID:
+                        phy->panid = *((uint16_t *) data);
+                        l_debug("  PANID: %d", phy->panid);
+                        break;
 		}
 	}
 }
