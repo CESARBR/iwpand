@@ -41,13 +41,7 @@ struct phy {
 	uint16_t panid;
 };
 
-struct wpan {
-	uint32_t id;
-	uint16_t panid;
-};
-
 static struct l_queue *phy_list = NULL;
-static struct l_queue *iface_list = NULL;
 static struct l_genl_family *nl802154 = NULL;
 
 static void phy_free(void *data)
@@ -190,8 +184,6 @@ static struct l_dbus_message *phy_property_set_panid(struct l_dbus *dbus,
         msg = l_genl_msg_new_sized(NL802154_CMD_SET_PAN_ID, 64);
         l_genl_msg_append_attr(msg, NL802154_ATTR_WPAN_PHY,
                                sizeof(phy->id), &phy->id);
-        l_genl_msg_append_attr(msg, NL802154_ATTR_PAGE, 1, &phy->page);
-        l_genl_msg_append_attr(msg, NL802154_ATTR_CHANNEL, 1, &phy->channel);
         l_genl_msg_append_attr(msg, NL802154_ATTR_PAN_ID, 2, &value);
 
         if (!l_genl_family_send(nl802154, msg, NULL, NULL, NULL)) {
@@ -288,39 +280,58 @@ static void get_wpan_phy_callback(struct l_genl_msg *msg, void *user_data)
 			phy->channel = *((uint8_t *) data);
 			l_debug("  channel: %d", phy->channel);
 			break;
-		case NL802154_ATTR_PAN_ID:
-                        phy->panid = *((uint16_t *) data);
-                        l_debug("  PanId: %d", phy->panid);
-                        break;
 		}
 	}
 }
 
+static bool phy_id_cmp(const void *a, const void *b)
+{
+        const struct phy *phy = a;
+        const uint32_t *id = b;
+
+        return *id == phy->id;
+}
+
 static void get_interface_callback(struct l_genl_msg *msg, void *user_data)
 {
-	struct wpan *wpan;
+	struct phy *phy;
 	struct l_genl_attr attr;
 	uint16_t type, len;
 	const void *data;
+	uint32_t id;
 
 	l_debug("");
 
 	if (!l_genl_attr_init(&attr, msg))
 		return;
 
-	wpan = l_new(struct wpan, 1);
-	l_queue_push_head(iface_list, wpan);
-
 	while (l_genl_attr_next(&attr, &type, &len, &data)) {
 		l_debug("type: %u len:%u", type, len);
 		switch (type) {
 		case NL802154_ATTR_WPAN_PHY:
-			wpan->id = *((uint32_t *) data);
-			l_debug("  id: %d", wpan->id);
-			break;
+			id = *((uint32_t *) data);
+			l_debug("  id: %d", id);
+			goto done;
+		}
+	}
+
+	/* PHY identification not found */
+	return;
+
+done:
+	phy = l_queue_find(phy_list, phy_id_cmp, &id);
+	if (!phy)
+		return;
+
+	if (!l_genl_attr_init(&attr, msg))
+		return;
+
+	while (l_genl_attr_next(&attr, &type, &len, &data)) {
+		l_debug("type: %u len:%u", type, len);
+		switch (type) {
 		case NL802154_ATTR_PAN_ID:
-                        wpan->panid = *((uint16_t *) data);
-                        l_debug("  PanId: %d", wpan->panid);
+                        phy->panid = *((uint16_t *) data);
+                        l_debug("  PanId: %d", phy->panid);
 			break;
 		}
 	}
@@ -353,7 +364,6 @@ bool phy_init(struct l_genl_family *genl)
 	}
 
 	phy_list = l_queue_new();
-	iface_list = l_queue_new();
 	nl802154 = genl;
 
 	return true;
@@ -362,5 +372,4 @@ bool phy_init(struct l_genl_family *genl)
 void phy_exit(struct l_genl_family *genl)
 {
 	l_queue_destroy(phy_list, phy_free);
-	l_queue_destroy(iface_list, l_free);
 }
