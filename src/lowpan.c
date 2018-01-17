@@ -37,6 +37,7 @@
 #define TYPE_6LOWPAN "lowpan"
 
 static struct l_netlink *rtnl = NULL;
+static unsigned int  nlwatch = 0;
 
 static size_t rta_add(void *rta_buf, unsigned short type, uint16_t len,
 							const void *data)
@@ -75,15 +76,14 @@ static void rtnl_link_notify(uint16_t type, const void *data, uint32_t len,
 	}
 }
 
-
 static void lowpan_enable_callback(int error, uint16_t type,
 						const void *data, uint32_t len,
 						void *user_data)
 {
-	l_info("lowpan enabled error: %d", error);
 }
 
-bool lowpan_init(uint32_t ifindex)
+static struct ifinfomsg *create_rtmmsg(uint16_t msg_type, uint32_t ifindex,
+								uint32_t *rtlen)
 {
 	struct ifinfomsg *rtmmsg;
 	size_t nlmon_type_len = strlen(TYPE_6LOWPAN);
@@ -94,8 +94,6 @@ bool lowpan_init(uint32_t ifindex)
 	size_t bufsize;
 	struct rtattr *linkinfo_rta;
 	uint32_t iflink = ifindex;
-
-	l_info("6LoWPAN init");
 
 	if (ifname) {
 		ifname_len = strlen(ifname) + 1;
@@ -109,25 +107,12 @@ bool lowpan_init(uint32_t ifindex)
 		RTA_SPACE(ifname_len) + RTA_SPACE(0) +
 		RTA_SPACE(nlmon_type_len);
 
-	rtnl = l_netlink_new(NETLINK_ROUTE);
-	if (!rtnl) {
-		l_error("Failed to open netlink route socket");
-		return false;
-	}
-
-	if (!l_netlink_register(rtnl, RTNLGRP_LINK,
-				rtnl_link_notify, NULL, NULL)) {
-		l_error("Failed to register RTNL link notifications");
-		l_netlink_destroy(rtnl);
-		return false;
-	}
-
 	/* Enable lowpan0 interface */
 	rtmmsg = l_malloc(bufsize);
 	memset(rtmmsg, 0, bufsize);
 
 	rtmmsg->ifi_family = AF_UNSPEC;
-	rtmmsg->ifi_change = 0;
+	rtmmsg->ifi_change = ~0;
 	rtmmsg->ifi_index = 0;
 	rtmmsg->ifi_type = ARPHRD_NETROM;
 	rtmmsg->ifi_flags = 0;
@@ -146,18 +131,72 @@ bool lowpan_init(uint32_t ifindex)
 
 	linkinfo_rta->rta_len = rta_buf - (void *) linkinfo_rta;
 
+	switch (msg_type) {
+	case RTM_NEWLINK:
+		rtmmsg->ifi_flags = IFF_UP | IFF_ALLMULTI | IFF_NOARP;
+		break;
+	case RTM_DELLINK:
+		rta_buf += rta_add(rta_buf, IFLA_IFNAME, ifname_len, ifname);
+		break;
+	}
+
+	*rtlen = rta_buf - (void *) rtmmsg;
+
+	return rtmmsg;
+}
+
+bool lowpan_init(uint32_t ifindex)
+{
+	struct ifinfomsg *rtmmsg;
+	uint32_t rtlen;
+
+	l_info("6LoWPAN init");
+
+	rtnl = l_netlink_new(NETLINK_ROUTE);
+	if (!rtnl) {
+		l_error("Failed to open netlink route socket");
+		return false;
+	}
+
+	nlwatch = l_netlink_register(rtnl, RTNLGRP_LINK,
+				rtnl_link_notify, NULL, NULL);
+	if (!nlwatch) {
+		l_error("Failed to register RTNL link notifications");
+		l_netlink_destroy(rtnl);
+		return false;
+	}
+
+	rtmmsg = create_rtmmsg(RTM_NEWLINK, ifindex, &rtlen);
+	if (!rtmmsg)
+		return false;
+
 	l_netlink_send(rtnl, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL,
-		       rtmmsg, rta_buf - (void *) rtmmsg,
-		       lowpan_enable_callback, NULL, NULL);
+		       rtmmsg, rtlen, lowpan_enable_callback, NULL, NULL);
 
 	l_free(rtmmsg);
 
 	return true;
 }
 
-void lowpan_exit(void)
+static void rtdellink_done(void *user_data)
 {
-	l_info("6LoWPAN exit");
-
 	l_netlink_destroy(rtnl);
+}
+
+void lowpan_exit(uint32_t ifindex)
+{
+	struct ifinfomsg *rtmmsg;
+	uint32_t rtlen;
+
+	l_info("6LoWPAN exit");
+	rtmmsg = create_rtmmsg(RTM_DELLINK, ifindex, &rtlen);
+	if (!rtmmsg)
+		return;
+
+	/* TODO: Use refcount to manage multiple adapters */
+	l_netlink_unregister(rtnl, nlwatch);
+	l_netlink_send(rtnl, RTM_DELLINK, 0, rtmmsg, rtlen,
+		       NULL, NULL, rtdellink_done);
+
+	l_free(rtmmsg);
 }

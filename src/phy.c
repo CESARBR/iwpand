@@ -91,7 +91,7 @@ static struct l_dbus_message *property_set_powered(struct l_dbus *dbus,
 	if (value == true)
 		lowpan_init(wpan->ifindex);
 	else
-		lowpan_exit();
+		lowpan_exit(wpan->ifindex);
 
 done:
 	complete(dbus, message, NULL);
