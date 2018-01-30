@@ -26,6 +26,7 @@
 
 #include <stdbool.h>
 
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <linux/if_arp.h>
 #include <linux/rtnetlink.h>
@@ -54,6 +55,45 @@ static size_t rta_add(void *rta_buf, unsigned short type, uint16_t len,
 	return RTA_SPACE(len);
 }
 
+static void rtnl_setp_ip_callback(int error, uint16_t type,
+						const void *data, uint32_t len,
+						void *user_data)
+{
+	if (error)
+		l_error("Set IP error: %d", error);
+}
+
+static void rtnl_setip(int index)
+{
+	uint8_t buffer[NLMSG_LENGTH(sizeof(struct ifaddrmsg)) +
+			RTA_LENGTH(sizeof(struct in6_addr))];
+
+	const char *address = "fe80::1";
+	struct ifaddrmsg *ifaddrmsg;
+	void *rta_buf;
+	struct in6_addr ipv6_addr;
+	uint32_t rtlen;
+
+	if (inet_pton(AF_INET6, address, &ipv6_addr) < 1)
+		return;
+
+	ifaddrmsg = (struct ifaddrmsg *) buffer;
+
+	ifaddrmsg->ifa_family = AF_INET6;
+	ifaddrmsg->ifa_prefixlen = 64;
+	ifaddrmsg->ifa_flags = IFA_F_PERMANENT;
+	ifaddrmsg->ifa_scope = RT_SCOPE_LINK;
+	ifaddrmsg->ifa_index = index;
+	rta_buf = ifaddrmsg + 1;
+
+	rta_buf += rta_add(rta_buf, IFA_LOCAL, sizeof(ipv6_addr), &ipv6_addr);
+	rtlen = rta_buf - (void *) ifaddrmsg;
+
+	l_netlink_send(rtnl, RTM_NEWADDR,
+		       NLM_F_REPLACE | NLM_F_EXCL | NLM_F_CREATE,
+		       ifaddrmsg, rtlen, rtnl_setp_ip_callback, NULL, NULL);
+}
+
 static void rtnl_link_notify(uint16_t type, const void *data, uint32_t len,
 							void *user_data)
 {
@@ -68,21 +108,16 @@ static void rtnl_link_notify(uint16_t type, const void *data, uint32_t len,
 
 	switch (type) {
 	case RTM_NEWLINK:
-		l_info("RTNL_NEWLINK");
+		l_info("RTNL_NEWLINK ifi_index: %d", ifi->ifi_index);
+		rtnl_setip(ifi->ifi_index);
 		break;
 	case RTM_DELLINK:
-		l_info("RTM_DELLINK");
+		l_info("RTM_DELLINK ifi_index: %d", ifi->ifi_index);
 		break;
 	}
 }
 
-static void lowpan_enable_callback(int error, uint16_t type,
-						const void *data, uint32_t len,
-						void *user_data)
-{
-}
-
-static struct ifinfomsg *create_rtmmsg(uint16_t msg_type, uint32_t ifindex,
+static struct ifinfomsg *create_rtminfomsg(uint16_t msg_type, uint32_t index,
 								uint32_t *rtlen)
 {
 	struct ifinfomsg *rtmmsg;
@@ -93,7 +128,7 @@ static struct ifinfomsg *create_rtmmsg(uint16_t msg_type, uint32_t ifindex,
 	void *rta_buf;
 	size_t bufsize;
 	struct rtattr *linkinfo_rta;
-	uint32_t iflink = ifindex;
+	uint32_t iflink = index;
 
 	if (ifname) {
 		ifname_len = strlen(ifname) + 1;
@@ -145,7 +180,7 @@ static struct ifinfomsg *create_rtmmsg(uint16_t msg_type, uint32_t ifindex,
 	return rtmmsg;
 }
 
-bool lowpan_init(uint32_t ifindex)
+bool lowpan_init(uint32_t index)
 {
 	struct ifinfomsg *rtmmsg;
 	uint32_t rtlen;
@@ -166,12 +201,12 @@ bool lowpan_init(uint32_t ifindex)
 		return false;
 	}
 
-	rtmmsg = create_rtmmsg(RTM_NEWLINK, ifindex, &rtlen);
+	rtmmsg = create_rtminfomsg(RTM_NEWLINK, index, &rtlen);
 	if (!rtmmsg)
 		return false;
 
 	l_netlink_send(rtnl, RTM_NEWLINK, NLM_F_CREATE | NLM_F_EXCL,
-		       rtmmsg, rtlen, lowpan_enable_callback, NULL, NULL);
+		       rtmmsg, rtlen, NULL, NULL, NULL);
 
 	l_free(rtmmsg);
 
@@ -183,13 +218,13 @@ static void rtdellink_done(void *user_data)
 	l_netlink_destroy(rtnl);
 }
 
-void lowpan_exit(uint32_t ifindex)
+void lowpan_exit(uint32_t index)
 {
 	struct ifinfomsg *rtmmsg;
 	uint32_t rtlen;
 
 	l_info("6LoWPAN exit");
-	rtmmsg = create_rtmmsg(RTM_DELLINK, ifindex, &rtlen);
+	rtmmsg = create_rtminfomsg(RTM_DELLINK, index, &rtlen);
 	if (!rtmmsg)
 		return;
 
