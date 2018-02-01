@@ -123,23 +123,17 @@ static struct ifinfomsg *create_rtminfomsg(uint16_t msg_type, uint32_t index,
 	struct ifinfomsg *rtmmsg;
 	size_t nlmon_type_len = strlen(TYPE_6LOWPAN);
 	const char *ifname = "lowpan0";
-	unsigned short ifname_len = 0;
+	unsigned short ifname_len = strlen(ifname) + 1;
 	unsigned short link_len = 0;
 	void *rta_buf;
 	size_t bufsize;
 	struct rtattr *linkinfo_rta;
 	uint32_t iflink = index;
 
-	if (ifname) {
-		ifname_len = strlen(ifname) + 1;
-		if (ifname_len < 2 || ifname_len > IFNAMSIZ)
-			return false;
-	}
-
 	link_len = sizeof(iflink);
 	bufsize = NLMSG_LENGTH(sizeof(struct ifinfomsg)) +
 		RTA_SPACE(link_len) +
-		RTA_SPACE(ifname_len) + RTA_SPACE(0) +
+		RTA_SPACE(ifname_len) +
 		RTA_SPACE(nlmon_type_len);
 
 	/* Enable lowpan0 interface */
