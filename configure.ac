@@ -26,6 +26,12 @@ AC_PROG_LN_S
 LT_PREREQ(2.2)
 LT_INIT([disable-static])
 
+PKG_CHECK_MODULES(ELL, ell,
+  [AC_DEFINE([HAVE_ELL],[1],[Use ELL])],
+  [AC_MSG_ERROR("ell missing")])
+AC_SUBST(ELL_CFLAGS)
+AC_SUBST(ELL_LIBS)
+
 AC_ARG_ENABLE(optimization, AC_HELP_STRING([--disable-optimization],
 			[disable code optimization through compiler]), [
 	if (test "${enableval}" = "no"); then
